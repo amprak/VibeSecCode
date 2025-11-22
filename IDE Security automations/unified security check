@@ -1,0 +1,13 @@
+#INSTRUCTIONS
+Add the following to package.json
+
+
+{
+  "scripts": {
+    "lint": "eslint .",
+    "test": "npm run unit-test", // or your test runner
+    "semgrep": "semgrep --config .semgrep.yml --severity ERROR",
+    "secrets-scan": "gitleaks detect --no-banner --report-format json --report-path .reports/gitleaks-report.json || true",
+    "security-check": "mkdir -p .reports && npm run lint && npm run test && npm run semgrep && npm run secrets-scan && node scripts/aggregate-security-checks.js"
+  }
+}
