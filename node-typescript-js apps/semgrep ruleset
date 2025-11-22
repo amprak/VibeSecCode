@@ -1,0 +1,74 @@
+#INSTRUCTIONS 
+Create .semgrep.yml at repo root- copy text, and set to fail based on severity of the finding.Run on each pr
+# .semgrep.yml
+# Minimal high-signal ruleset for a Node/TS + React/Next app
+
+# Use Semgrep's recommended community rule packs
+# (run `semgrep install-semgrep-rules` or ensure internet access in CI)
+
+rules:
+  # Import curated packs
+  - id: import-owasp-top-ten
+    pattern: "import('p/owasp-top-ten')"
+    message: "Include OWASP Top 10 Semgrep rules"
+    languages: [yaml]
+    severity: INFO
+    paths:
+      include:
+        - .semgrep.yml
+
+# OR use the 'configs' entry (newer Semgrep versions)
+configs:
+  - p/owasp-top-ten
+  - p/nodejs
+  - p/javascript
+  - p/typescript
+  - p/security-audit
+  - p/secrets
+
+# Custom high-value rules
+rules:
+  # 1) Dangerous eval / new Function
+  - id: js-dangerous-eval
+    patterns:
+      - pattern-either:
+        - pattern: eval($X)
+        - pattern: new Function($X)
+    message: "Avoid eval / new Function – potential RCE. Use safer alternatives."
+    languages: [javascript, typescript]
+    severity: ERROR
+
+  # 2) Hardcoded secrets heuristic
+  - id: hardcoded-secret-suspect
+    pattern: |
+      const $VAR = "$SECRET";
+    message: "Possible hardcoded secret: {$VAR}. Move to a secret manager."
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      likelihood: medium
+      impact: high
+
+  # 3) Express route without auth middleware (example)
+  - id: express-route-no-auth
+    patterns:
+      - pattern: |
+          app.$METHOD("$ROUTE", (req, res) => {
+            ...
+          });
+    message: "Express route without auth middleware. Confirm this is intentionally public."
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      category: auth
+
+  # 4) Direct string concatenation in SQL
+  - id: sql-string-concat
+    pattern-either:
+      - pattern: $DB.query("..." + $VAR + "...")
+      - pattern: $DB.query(`...${$VAR}...`)
+    message: "Possible SQL injection via string concatenation. Use parameterized queries / ORM."
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      owasp: A03:2021-Injection
