@@ -1,0 +1,133 @@
+#INSTRUCTIONS 
+This is for those of you who use Notion/Confluence, Jira, and CI/CD and want to refer to a single source of truth for security checks that looks at Security in the SDLC. 
+Machine readable + you can connect your tools to read + refer to this as a starting point. 
+This would be complementary to the semgrep ruleset, as well as the cursorrules files you add to your project.
+Create a file at repo root: .security-checks.json
+Paste the following text, updating details for your IDE, CI, and Jira/Notion environments so all these can read and refer to this as a single source of truth. 
+
+
+{
+  "version": "1.0",
+  "categories": [
+    {
+      "id": "requirements_design",
+      "name": "Requirements & Design",
+      "checks": [
+        {
+          "id": "RD-1",
+          "description": "Ticket includes data classification (PII / credentials / financial / none).",
+          "type": "manual",
+          "required": true
+        },
+        {
+          "id": "RD-2",
+          "description": "Ticket includes brief threat sketch (entry points, trust boundaries, abuse cases).",
+          "type": "manual",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "implementation",
+      "name": "Implementation",
+      "checks": [
+        {
+          "id": "IMPL-1",
+          "description": "No secrets in source / config (verified by secrets scanner).",
+          "type": "tool",
+          "tool": "gitleaks",
+          "required": true
+        },
+        {
+          "id": "IMPL-2",
+          "description": "Static analysis (Semgrep) passes with no ERROR-level findings.",
+          "type": "tool",
+          "tool": "semgrep",
+          "required": true
+        },
+        {
+          "id": "IMPL-3",
+          "description": "All new endpoints validate input via schema (Zod/Yup/Joi/etc).",
+          "type": "manual",
+          "required": true
+        },
+        {
+          "id": "IMPL-4",
+          "description": "All database access via ORM/parameterized queries.",
+          "type": "manual",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "code_review",
+      "name": "Code Review",
+      "checks": [
+        {
+          "id": "CR-1",
+          "description": "At least one reviewer approved the PR.",
+          "type": "tool",
+          "tool": "git_host",
+          "required": true
+        },
+        {
+          "id": "CR-2",
+          "description": "Reviewer confirmed auth/authorization is correct for new/changed endpoints.",
+          "type": "manual",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "ci_cd",
+      "name": "CI/CD",
+      "checks": [
+        {
+          "id": "CI-1",
+          "description": "All tests pass in CI.",
+          "type": "tool",
+          "tool": "ci",
+          "required": true
+        },
+        {
+          "id": "CI-2",
+          "description": "No high-severity SCA findings (deps).",
+          "type": "tool",
+          "tool": "sca",
+          "required": true
+        },
+        {
+          "id": "CI-3",
+          "description": "No secrets detected in CI environment.",
+          "type": "tool",
+          "tool": "gitleaks",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "env_access",
+      "name": "Environments & Access",
+      "checks": [
+        {
+          "id": "ENV-1",
+          "description": "Feature deployed only via CI/CD (no manual prod changes).",
+          "type": "manual",
+          "required": false
+        }
+      ]
+    },
+    {
+      "id": "logging_incidents",
+      "name": "Logging & Incidents",
+      "checks": [
+        {
+          "id": "LOG-1",
+          "description": "Security-relevant actions (auth, admin, delete/update) are logged.",
+          "type": "manual",
+          "required": true
+        }
+      ]
+    }
+  ]
+}
