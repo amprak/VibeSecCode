@@ -1,0 +1,205 @@
+#INSTRUCTIONS
+This is intentionally high level- needs you to configure your jira/notion/confluence environments and configure the projects where you need the output of these scripts to feed into. 
+What you'll get at the end is the output in the reports, but also formatted and pushed to the relevant Notion/Jira projects. 
+
+// scripts/aggregate-security-checks.js
+const fs = require("fs");
+const path = require("path");
+const https = require("https");
+
+const JIRA_BASE_URL = process.env.JIRA_BASE_URL;            // e.g. "https://yourcompany.atlassian.net"
+const JIRA_PROJECT_KEY = process.env.JIRA_PROJECT_KEY;      // e.g. "SEC"
+const JIRA_AUTH = process.env.JIRA_AUTH;                    // base64("<email>:<api_token>")
+const NOTION_TOKEN = process.env.NOTION_TOKEN;
+const NOTION_DB_ID = process.env.NOTION_DB_ID;
+
+function readJson(filePath, fallback = null) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+
+function postJson(url, headers, body) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const u = new URL(url);
+    const options = {
+      method: "POST",
+      hostname: u.hostname,
+      path: u.pathname + u.search,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(data),
+        ...headers
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let resp = "";
+      res.on("data", (chunk) => (resp += chunk));
+      res.on("end", () => {
+        try {
+          resolve(JSON.parse(resp));
+        } catch {
+          resolve(resp);
+        }
+      });
+    });
+
+    req.on("error", reject);
+    req.write(data);
+    req.end();
+  });
+}
+
+function getGitInfo() {
+  // very rough: you can improve by actually executing `git` via child_process
+  // or accept env vars set by CI (BRANCH_NAME, COMMIT_SHA, etc.)
+  return {
+    branch: process.env.GIT_BRANCH || "local-dev",
+    commit: process.env.GIT_COMMIT || "unknown"
+  };
+}
+
+function buildSecurityReport() {
+  const checklist = readJson(".security-checks.json", { categories: [] });
+  const gitleaks = readJson(".reports/gitleaks-report.json", { findings: [] });
+
+  const { branch, commit } = getGitInfo();
+
+  const issues = [];
+
+  // Example: treat any gitleaks finding as a failure for IMPL-1
+  if (gitleaks.findings && gitleaks.findings.length > 0) {
+    issues.push({
+      checkId: "IMPL-1",
+      status: "fail",
+      detail: `${gitleaks.findings.length} potential secrets detected by gitleaks`
+    });
+  } else {
+    issues.push({
+      checkId: "IMPL-1",
+      status: "pass",
+      detail: "No secrets detected by gitleaks"
+    });
+  }
+
+  // You can add more logic here for Semgrep, tests, etc., reading their reports
+
+  return {
+    metadata: {
+      generatedAt: new Date().toISOString(),
+      branch,
+      commit
+    },
+    issues,
+    checklist
+  };
+}
+
+async function logToJira(report) {
+  if (!JIRA_BASE_URL || !JIRA_PROJECT_KEY || !JIRA_AUTH) return;
+
+  const summary = `[Security Check] ${report.metadata.branch} @ ${report.metadata.commit}`;
+  const description = [
+    `Security check run at ${report.metadata.generatedAt}`,
+    "",
+    "Issues:",
+    ...report.issues.map(
+      (i) => `- ${i.checkId} => ${i.status.toUpperCase()} (${i.detail})`
+    )
+  ].join("\n");
+
+  const payload = {
+    fields: {
+      project: { key: JIRA_PROJECT_KEY },
+      summary,
+      description,
+      issuetype: { name: "Task" }
+    }
+  };
+
+  await postJson(`${JIRA_BASE_URL}/rest/api/3/issue`, {
+    Authorization: `Basic ${JIRA_AUTH}`
+  }, payload);
+}
+
+async function logToNotion(report) {
+  if (!NOTION_TOKEN || !NOTION_DB_ID) return;
+
+  const title = `[Security Check] ${report.metadata.branch}`;
+  const summaryText = report.issues.map(
+    (i) => `${i.checkId}: ${i.status.toUpperCase()} – ${i.detail}`
+  ).join("\n");
+
+  const payload = {
+    parent: { database_id: NOTION_DB_ID },
+    properties: {
+      Name: {
+        title: [
+          {
+            text: { content: title }
+          }
+        ]
+      },
+      Branch: {
+        rich_text: [{ text: { content: report.metadata.branch } }]
+      },
+      Commit: {
+        rich_text: [{ text: { content: report.metadata.commit } }]
+      },
+      Status: {
+        select: { name: report.issues.some(i => i.status === "fail") ? "Fail" : "Pass" }
+      }
+    },
+    children: [
+      {
+        object: "block",
+        type: "paragraph",
+        paragraph: {
+          rich_text: [
+            {
+              type: "text",
+              text: { content: summaryText }
+            }
+          ]
+        }
+      }
+    ]
+  };
+
+  await postJson("https://api.notion.com/v1/pages", {
+    Authorization: `Bearer ${NOTION_TOKEN}`,
+    "Notion-Version": "2022-06-28"
+  }, payload);
+}
+
+(async () => {
+  const report = buildSecurityReport();
+
+  // Save local copy
+  fs.mkdirSync(".reports", { recursive: true });
+  fs.writeFileSync(
+    ".reports/security-report.json",
+    JSON.stringify(report, null, 2),
+    "utf8"
+  );
+
+  const hasFailures = report.issues.some((i) => i.status === "fail");
+
+  try {
+    await Promise.all([logToJira(report), logToNotion(report)]);
+  } catch (err) {
+    console.error("Failed to log to Jira/Notion:", err);
+    // Do not fail build solely for logging failure (optional – your choice)
+  }
+
+  if (hasFailures) {
+    console.error("Security checks failed.");
+    process.exit(1);
+  } else {
+    console.log("Security checks passed.");
+  }
+})();
